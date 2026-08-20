@@ -1,0 +1,2357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bongsho Bistar</title>
+
+<!--
+  Defence in depth. Even if something slipped past the escaping in the script
+  below, this policy gives an injected payload nowhere to send data and no way
+  to pull in a second stage. Everything the game legitimately talks to is named
+  explicitly and everything else is denied by default.
+
+  Note that STUN and TURN traffic is NOT governed by connect-src, so the relay
+  servers keep working regardless. If you ever move to your own PeerServer,
+  add its origin to connect-src or signalling will be blocked.
+-->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'unsafe-inline' https://unpkg.com;
+  style-src 'unsafe-inline' https://fonts.googleapis.com;
+  font-src https://fonts.gstatic.com;
+  img-src 'self' data:;
+  connect-src https://*.peerjs.com wss://*.peerjs.com https://*.metered.live;
+  base-uri 'none';
+  form-action 'none'
+">
+<meta name="referrer" content="no-referrer">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#0F1117;
+    --panel:#171A24;
+    --panel-2:#1D2130;
+    --cell:#1F2330;
+    --cell-border:#2A2F42;
+    --cell-border-hi:#3A4160;
+    --ink:#EDEBE4;
+    --muted:#767C93;
+    --p0:#FF3B5C; /* ruby */
+    --p1:#2F80FF; /* cobalt */
+    --p2:#FFB627; /* amber */
+    --p3:#21D19F; /* jade */
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html{
+    background:var(--void);
+    color:var(--ink);
+    font-family:'Inter',sans-serif;
+    -webkit-text-size-adjust:100%;
+    text-size-adjust:100%;
+  }
+  body{
+    display:flex;
+    align-items:flex-start;
+    justify-content:center;
+    width:100%;
+    min-height:100vh;
+    min-height:100dvh;
+    background:
+      radial-gradient(circle at 15% 10%, rgba(255,59,92,0.08), transparent 40%),
+      radial-gradient(circle at 85% 15%, rgba(47,128,255,0.08), transparent 40%),
+      radial-gradient(circle at 50% 90%, rgba(33,209,159,0.06), transparent 45%),
+      var(--void);
+    padding:16px;
+    overflow-x:hidden;
+  }
+  .screen{ width:100%; display:none; }
+  .screen.active{ display:flex; flex-direction:column; align-items:center; }
+
+  /* ---------- SETUP SCREEN ---------- */
+  #setup-screen{ max-width:520px; margin:0 auto; }
+  .brand{
+    font-family:'Baloo 2', sans-serif;
+    font-weight:800;
+    font-size:clamp(40px,8vw,64px);
+    letter-spacing:0.5px;
+    text-align:center;
+    background:linear-gradient(90deg, var(--p0), var(--p1) 40%, var(--p2) 70%, var(--p3));
+    -webkit-background-clip:text;
+    background-clip:text;
+    color:transparent;
+    line-height:1;
+  }
+  .tagline{
+    text-align:center;
+    color:var(--muted);
+    font-size:14px;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    margin-top:10px;
+    font-weight:600;
+  }
+  .setup-card{
+    width:100%;
+    background:var(--panel);
+    border:1px solid var(--cell-border);
+    border-radius:20px;
+    padding:28px;
+    margin-top:36px;
+  }
+  .field-label{
+    font-size:12px;
+    text-transform:uppercase;
+    letter-spacing:0.1em;
+    color:var(--muted);
+    font-weight:700;
+    margin-bottom:12px;
+    display:block;
+  }
+  .choice-row{
+    display:grid;
+    gap:10px;
+    margin-bottom:26px;
+  }
+  .choice-row.players{ grid-template-columns:repeat(3,1fr); }
+  .choice-row.sizes{ grid-template-columns:repeat(3,1fr); }
+  .choice-btn{
+    background:var(--panel-2);
+    border:1.5px solid var(--cell-border);
+    border-radius:14px;
+    color:var(--ink);
+    font-family:'Inter',sans-serif;
+    font-weight:600;
+    font-size:14px;
+    padding:14px 8px;
+    cursor:pointer;
+    transition:border-color .15s ease, transform .1s ease, background .15s ease;
+  }
+  .choice-btn:hover{ border-color:var(--cell-border-hi); transform:translateY(-1px); }
+  .choice-btn.selected{
+    border-color:var(--ink);
+    background:#242938;
+    box-shadow:0 0 0 1px var(--ink) inset;
+  }
+  .swatch-row{ display:flex; justify-content:center; gap:6px; margin-bottom:8px; }
+  .swatch-dot{ width:9px; height:9px; border-radius:50%; }
+  .start-btn{
+    width:100%;
+    margin-top:6px;
+    padding:16px;
+    border:none;
+    border-radius:14px;
+    background:var(--ink);
+    color:var(--void);
+    font-family:'Baloo 2', sans-serif;
+    font-weight:700;
+    font-size:18px;
+    letter-spacing:0.02em;
+    cursor:pointer;
+    transition:transform .12s ease, opacity .12s ease;
+  }
+  .start-btn:hover{ transform:translateY(-1px); opacity:0.92; }
+  .start-btn:active{ transform:translateY(0px) scale(0.99); }
+
+  /* ---------- GAME SCREEN ---------- */
+  #game-screen{ width:min(94vw, 640px); max-width:640px; margin:0 auto; }
+  .topbar{
+    width:100%;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin-bottom:12px;
+  }
+  .title-mini{
+    font-family:'Baloo 2', sans-serif;
+    font-weight:800;
+    font-size:clamp(15px,4.2vw,22px);
+    white-space:nowrap;
+  }
+  .icon-btn{
+    background:var(--panel);
+    border:1px solid var(--cell-border);
+    color:var(--muted);
+    font-family:'Inter',sans-serif;
+    font-weight:600;
+    font-size:12px;
+    border-radius:10px;
+    padding:9px 14px;
+    cursor:pointer;
+    letter-spacing:0.04em;
+    text-transform:uppercase;
+  }
+  .icon-btn:hover{ color:var(--ink); border-color:var(--cell-border-hi); }
+
+  .player-chips{
+    display:flex;
+    gap:8px;
+    width:100%;
+    margin-bottom:10px;
+    flex-wrap:wrap;
+  }
+  .chip{
+    flex:1;
+    min-width:110px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    background:var(--panel);
+    border:1.5px solid var(--cell-border);
+    border-radius:12px;
+    padding:8px 12px;
+    transition:all .18s ease;
+    opacity:0.55;
+    position:relative;
+  }
+  .chip .dot{ width:14px; height:14px; border-radius:50%; flex-shrink:0; box-shadow:0 0 0 0 transparent; transition:box-shadow .2s ease; }
+  .chip .name{ font-weight:700; font-size:13px; }
+  .chip .stat{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--muted); margin-left:auto; }
+  .chip.active{
+    opacity:1;
+    border-color:var(--ink);
+    transform:translateY(-2px);
+    box-shadow:0 4px 14px rgba(0,0,0,0.35);
+  }
+  .chip.eliminated{ opacity:0.22; filter:grayscale(1); }
+  .chip.leading{ border-color:currentColor; }
+  .chip.leading .dot{ box-shadow:0 0 0 4px color-mix(in srgb, currentColor 25%, transparent); }
+  .chip .crown{ font-size:11px; margin-left:4px; }
+
+  .territory-bar{
+    width:100%;
+    height:8px;
+    border-radius:999px;
+    overflow:hidden;
+    display:flex;
+    margin-bottom:14px;
+    background:var(--cell);
+    border:1px solid var(--cell-border);
+  }
+  .territory-seg{ height:100%; transition:width .3s ease; }
+
+  .board-wrap{
+    width:100%;
+    background:var(--panel);
+    border:1px solid var(--cell-border);
+    border-radius:20px;
+    padding:12px;
+    position:relative;
+  }
+  #board{
+    display:grid;
+    gap:5px;
+    width:min(100%, 58vh, 58dvh, 520px);
+    aspect-ratio:1/1;
+    margin:0 auto;
+  }
+  .cell{
+    position:relative;
+    background:var(--cell);
+    border:1.5px solid var(--cell-border);
+    border-radius:9px;
+    cursor:pointer;
+    transition:border-color .2s ease, background .25s ease, box-shadow .25s ease;
+    overflow:visible;
+  }
+  .cell:hover{ border-color:var(--cell-border-hi); }
+  .cell.owned{
+    background:radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--owner-color) 32%, var(--cell)) 0%, var(--cell) 78%);
+    border-color:color-mix(in srgb, var(--owner-color) 55%, var(--cell-border));
+  }
+  .cell.owned.crit{
+    box-shadow:0 0 0 1px color-mix(in srgb, var(--owner-color) 70%, transparent) inset;
+  }
+  .cell.denied{ animation:shake .3s ease; }
+  @keyframes shake{
+    0%,100%{ transform:translateX(0); }
+    25%{ transform:translateX(-3px); }
+    75%{ transform:translateX(3px); }
+  }
+  .pip{
+    position:absolute;
+    border-radius:50%;
+    transform:translate(-50%,-50%);
+    box-shadow:0 1px 3px rgba(0,0,0,0.4);
+  }
+  .ring{
+    position:absolute;
+    top:50%; left:50%;
+    width:20%; height:20%;
+    border-radius:50%;
+    border:2px solid var(--ink);
+    transform:translate(-50%,-50%) scale(1);
+    opacity:0;
+    pointer-events:none;
+  }
+  .cell.pulse .ring{
+    animation:pulseRing .45s ease-out forwards;
+  }
+  @keyframes pulseRing{
+    0%{ opacity:0.9; transform:translate(-50%,-50%) scale(1); }
+    100%{ opacity:0; transform:translate(-50%,-50%) scale(5.5); }
+  }
+  .cell.flash{ background:#2B3044; }
+
+  .bottombar{
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:space-between;
+    width:100%;
+    margin-top:14px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:12px;
+    color:var(--muted);
+    row-gap:6px;
+  }
+  #hint-info{
+    order:3;
+    width:100%;
+    text-align:center;
+    letter-spacing:0.06em;
+  }
+
+  /* Win overlay */
+  #win-overlay{
+    position:fixed; inset:0;
+    background:rgba(6,7,11,0.86);
+    display:none;
+    align-items:center;
+    justify-content:center;
+    z-index:50;
+  }
+  #win-overlay.active{ display:flex; }
+  .win-card{
+    background:var(--panel);
+    border:1px solid var(--cell-border-hi);
+    border-radius:22px;
+    padding:44px 40px;
+    text-align:center;
+    max-width:380px;
+  }
+  .win-dot{
+    width:56px; height:56px; border-radius:50%;
+    margin:0 auto 18px;
+    box-shadow:0 0 40px 4px currentColor;
+  }
+  .win-title{
+    font-family:'Baloo 2', sans-serif;
+    font-weight:800;
+    font-size:30px;
+    margin-bottom:6px;
+  }
+  .win-sub{ color:var(--muted); font-size:13px; margin-bottom:24px; }
+
+  /* Credit overlay */
+  #credit-overlay{
+    position:fixed; inset:0;
+    background:rgba(6,7,11,0.86);
+    display:none;
+    align-items:center;
+    justify-content:center;
+    z-index:50;
+    padding:20px;
+  }
+  #credit-overlay.active{ display:flex; }
+  .credit-card{
+    background:var(--panel);
+    border:1px solid var(--cell-border-hi);
+    border-radius:22px;
+    padding:34px 30px;
+    text-align:center;
+    max-width:340px;
+  }
+  .credit-title{
+    font-family:'Baloo 2', sans-serif;
+    font-weight:800;
+    font-size:24px;
+    margin-bottom:8px;
+  }
+  .credit-sub{ color:var(--muted); font-size:13px; line-height:1.6; margin-bottom:22px; }
+  .credit-link{
+    display:inline-block;
+    color:var(--ink);
+    text-decoration:none;
+    font-size:13px;
+    font-weight:600;
+    padding:10px 18px;
+    border-radius:12px;
+    border:1px solid var(--cell-border-hi);
+    margin-bottom:10px;
+  }
+  .credit-link:hover{ border-color:var(--p1); }
+  .credit-name-btn{
+    background:none; border:none; padding:0; margin:0;
+    color:inherit; font:inherit; cursor:pointer;
+    text-decoration:underline dotted;
+    text-underline-offset:2px;
+  }
+
+  @media (max-width:480px){
+    .choice-row.players{ grid-template-columns:repeat(3,1fr); }
+    .brand{ font-size:38px; }
+    .setup-card{ padding:20px; margin-top:22px; }
+    body{ padding:10px; }
+    .board-wrap{ padding:8px; }
+    .chip{ min-width:90px; padding:7px 9px; }
+  }
+
+  /* ---------- ONLINE / LOBBY ---------- */
+  .choice-row.mode{ grid-template-columns:repeat(3,1fr); }
+  .text-input{
+    width:100%;
+    background:var(--panel-2);
+    border:1.5px solid var(--cell-border);
+    border-radius:12px;
+    color:var(--ink);
+    font-family:'JetBrains Mono',monospace;
+    font-size:16px;
+    padding:12px 14px;
+    margin-bottom:18px;
+    letter-spacing:0.05em;
+  }
+  .text-input:focus{ outline:none; border-color:var(--cell-border-hi); }
+  .setup-error{
+    color:var(--p0);
+    font-size:12px;
+    margin-top:10px;
+    text-align:center;
+    min-height:16px;
+    letter-spacing:0.02em;
+  }
+  .start-btn:disabled{ opacity:0.4; cursor:not-allowed; transform:none !important; }
+  #lobby-screen .setup-card{ max-width:520px; }
+  .lobby-status{
+    text-align:center;
+    color:var(--muted);
+    font-size:13px;
+    margin-bottom:16px;
+    letter-spacing:0.03em;
+  }
+  .room-code-display{
+    font-family:'JetBrains Mono',monospace;
+    font-weight:700;
+    font-size:38px;
+    letter-spacing:0.18em;
+    text-align:center;
+    padding:18px;
+    background:var(--panel-2);
+    border:1.5px dashed var(--cell-border-hi);
+    border-radius:14px;
+    margin-bottom:20px;
+    cursor:pointer;
+    user-select:all;
+  }
+  .lobby-list{ display:flex; flex-direction:column; gap:8px; margin-bottom:24px; }
+  .lobby-slot{
+    display:flex; align-items:center; gap:10px;
+    background:var(--panel-2); border:1.5px solid var(--cell-border);
+    border-radius:12px; padding:11px 14px; font-weight:600; font-size:14px;
+  }
+  .lobby-slot .dot{ width:12px; height:12px; border-radius:50%; flex-shrink:0; }
+  .lobby-slot.empty{ opacity:0.4; font-style:italic; font-weight:400; }
+  #lobby-back-btn{ margin-top:16px; }
+  .net-badge{
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;
+    letter-spacing:0.08em;
+    color:var(--muted);
+    text-transform:uppercase;
+    display:none;
+    align-items:center;
+    gap:7px;
+    margin:0 auto 0 14px;
+  }
+  .net-badge.active{ display:flex; }
+  .net-badge .you-dot{ width:10px; height:10px; border-radius:50%; }
+  .lobby-note{
+    text-align:center;
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;
+    letter-spacing:0.04em;
+    color:var(--muted);
+    min-height:15px;
+    margin:-10px 0 16px;
+  }
+  .lobby-help{
+    background:var(--panel-2);
+    border:1px solid var(--cell-border);
+    border-radius:12px;
+    padding:14px 16px;
+    font-size:12.5px;
+    line-height:1.55;
+    color:var(--muted);
+    margin-bottom:16px;
+  }
+  .lobby-help ul{ margin:8px 0 8px 18px; }
+  .lobby-help li{ margin-bottom:4px; }
+  .net-tools{
+    width:100%;
+    margin-top:18px;
+    background:var(--panel);
+    border:1px solid var(--cell-border);
+    border-radius:16px;
+    padding:0 20px;
+  }
+  .net-tools summary{
+    cursor:pointer;
+    padding:16px 0;
+    font-size:12px;
+    font-weight:700;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:var(--muted);
+    list-style:none;
+  }
+  .net-tools summary::-webkit-details-marker{ display:none; }
+  .net-tools summary::before{ content:'+ '; }
+  .net-tools[open] summary::before{ content:'– '; }
+  .net-tools summary:hover{ color:var(--ink); }
+  .net-tools-body{ padding-bottom:22px; }
+  .net-tools-hint{
+    font-size:12.5px;
+    line-height:1.55;
+    color:var(--muted);
+    margin-bottom:14px;
+  }
+  .icon-btn.wide{ width:100%; padding:12px; }
+  .net-report{
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;
+    line-height:1.6;
+    color:var(--muted);
+    background:var(--panel-2);
+    border:1px solid var(--cell-border);
+    border-radius:10px;
+    padding:12px 14px;
+    margin-top:12px;
+    white-space:pre-wrap;
+    word-break:break-word;
+  }
+  .net-report.good{ color:var(--p3); border-color:color-mix(in srgb, var(--p3) 40%, var(--cell-border)); }
+  .net-report.bad{ color:var(--p0); border-color:color-mix(in srgb, var(--p0) 40%, var(--cell-border)); }
+  .net-check{
+    display:flex;
+    align-items:center;
+    gap:9px;
+    font-size:13px;
+    color:var(--muted);
+    margin-top:16px;
+    cursor:pointer;
+  }
+  .net-check input{ width:16px; height:16px; accent-color:var(--p1); cursor:pointer; }
+  #board.locked .cell{ cursor:default; }
+  #board.locked{ opacity:0.82; transition:opacity .2s ease; }
+
+  .credits{
+    width:100%;
+    text-align:center;
+    margin-top:18px;
+    padding-top:16px;
+    border-top:1px solid var(--cell-border);
+    font-size:11px;
+    letter-spacing:0.03em;
+    line-height:1.7;
+    color:var(--muted);
+  }
+  .credits span{ color:var(--ink); font-weight:600; }
+
+  /* ---------- SPREAD ANIMATION ---------- */
+  #board{ position:relative; }
+  .traveler{
+    position:absolute;
+    border-radius:50%;
+    transform:translate(-50%,-50%);
+    box-shadow:0 2px 6px rgba(0,0,0,0.45), 0 0 10px 1px color-mix(in srgb, currentColor 55%, transparent);
+    pointer-events:none;
+    z-index:6;
+    transition:left .3s cubic-bezier(.32,.68,.36,1), top .3s cubic-bezier(.32,.68,.36,1), transform .3s cubic-bezier(.32,.68,.36,1);
+  }
+  .cell.land{ animation:landBounce .28s ease; }
+  @keyframes landBounce{
+    0%{ transform:scale(0.82); }
+    55%{ transform:scale(1.12); }
+    100%{ transform:scale(1); }
+  }
+  @keyframes pipPop{
+    0%{ transform:translate(-50%,-50%) scale(0.3); opacity:0.4; }
+    70%{ transform:translate(-50%,-50%) scale(1.12); opacity:1; }
+    100%{ transform:translate(-50%,-50%) scale(1); opacity:1; }
+  }
+  .pip{ animation:pipPop .22s ease; }
+  .cell.owned{ transition:border-color .2s ease, background .35s ease, box-shadow .25s ease; }
+
+  /* A tile can hold more than 4 orbs when several neighbours land on it in the
+     same wave. The pip layout tops out at 4, so anything above that also gets a
+     numeric badge, otherwise a tile one hit from detonating looks identical to
+     one that is three hits away. */
+  .pip-count{
+    position:absolute;
+    top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    font-family:'JetBrains Mono',monospace;
+    font-weight:700;
+    font-size:clamp(9px,1.7vw,13px);
+    color:var(--ink);
+    text-shadow:0 1px 4px rgba(0,0,0,0.85), 0 0 6px rgba(0,0,0,0.6);
+    pointer-events:none;
+    z-index:5;
+  }
+
+  /* Cells are reachable with the keyboard, so they need a visible focus ring. */
+  .cell:focus{ outline:none; }
+  .cell:focus-visible{
+    outline:2px solid var(--ink);
+    outline-offset:2px;
+    z-index:7;
+  }
+</style>
+</head>
+<body>
+
+  <!-- SETUP -->
+  <div id="setup-screen" class="screen active">
+    <div class="brand">BONGSHO BISTAR</div>
+    <div class="tagline">tap · fill · explode · conquer</div>
+
+    <div class="setup-card">
+      <span class="field-label">Mode</span>
+      <div class="choice-row mode" id="mode-choices">
+        <button class="choice-btn selected" data-mode="local">Local<br><span style="color:var(--muted); font-weight:400;">pass & play</span></button>
+        <button class="choice-btn" data-mode="host">Host<br><span style="color:var(--muted); font-weight:400;">create room</span></button>
+        <button class="choice-btn" data-mode="join">Join<br><span style="color:var(--muted); font-weight:400;">enter code</span></button>
+      </div>
+
+      <div id="players-size-fields">
+        <span class="field-label">Players</span>
+        <div class="choice-row players" id="player-choices"></div>
+
+        <span class="field-label">Board size</span>
+        <div class="choice-row sizes" id="size-choices">
+          <button class="choice-btn" data-size="6">Small<br><span style="color:var(--muted); font-weight:400;">6×6</span></button>
+          <button class="choice-btn selected" data-size="8">Medium<br><span style="color:var(--muted); font-weight:400;">8×8</span></button>
+          <button class="choice-btn" data-size="10">Large<br><span style="color:var(--muted); font-weight:400;">10×10</span></button>
+        </div>
+      </div>
+
+      <div id="host-name-field" style="display:none;">
+        <span class="field-label">Your Name</span>
+        <input id="host-name" class="text-input" placeholder="Host" maxlength="14"
+               autocomplete="off" spellcheck="false" />
+      </div>
+
+      <div id="join-fields" style="display:none;">
+        <span class="field-label">Your Name</span>
+        <input id="join-name" class="text-input" placeholder="Player" maxlength="14"
+               autocomplete="off" spellcheck="false" />
+        <span class="field-label">Room Code</span>
+        <input id="join-code" class="text-input" placeholder="ABCD" maxlength="8" style="text-transform:uppercase;"
+               autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" />
+      </div>
+
+      <button class="start-btn" id="start-btn">START GAME</button>
+      <div class="setup-error" id="setup-error"></div>
+    </div>
+
+    <details class="net-tools" id="how-to-play" open>
+      <summary>How to play</summary>
+      <div class="net-tools-body">
+        <p class="net-tools-hint">
+          Bongsho Bistar is a chain-reaction territory game. Players take turns placing orbs
+          on a grid, and whoever fills the whole board with their color wins.
+        </p>
+        <ul style="margin:0 0 14px 18px; padding:0; color:var(--muted); font-size:12.5px; line-height:1.6;">
+          <li>On your first turn, tap any empty tile to claim it.</li>
+          <li>After that, you can only tap tiles you already own.</li>
+          <li>Each tap adds one orb to that tile.</li>
+          <li>A tile explodes once it reaches 4 orbs: it empties out and sends one orb into each
+            neighboring tile (up, down, left, right), capturing those tiles for you.</li>
+          <li>Explosions can chain into more explosions if a neighbor also fills up, so a single
+            move can flip a big chunk of the board.</li>
+          <li>Once every player has moved at least once, anyone whose tiles are wiped out is
+            eliminated.</li>
+          <li>Last player standing — or the only one left with tiles on the board — wins.</li>
+        </ul>
+        <p class="net-tools-hint" style="margin-bottom:0;">
+          Play locally by passing the device around, or use Host / Join above to play online
+          with friends on separate devices.
+        </p>
+      </div>
+    </details>
+
+    <details class="net-tools" id="net-tools">
+      <summary>Network tools</summary>
+      <div class="net-tools-body">
+        <p class="net-tools-hint">
+          Run the test if a room will not connect. It checks whether your browser can reach a
+          relay, which is what carries the game when two networks cannot link directly.
+        </p>
+        <button class="icon-btn wide" id="ice-test-btn">Run connection test</button>
+        <pre class="net-report" id="ice-report">Not run yet.</pre>
+
+        <label class="net-check">
+          <input type="checkbox" id="force-relay" />
+          <span>Force relay only, skip direct attempts</span>
+        </label>
+
+        <span class="field-label" style="margin-top:18px;">Your own relay credentials (optional)</span>
+        <p class="net-tools-hint">
+          A free Metered account gives 500 MB a month. Sign up, create an app, then paste the
+          app name and API key here. Everyone in the room should do this.
+        </p>
+        <input id="turn-account" class="text-input" placeholder="app name"
+               autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        <input id="turn-key" class="text-input" placeholder="api key" type="password"
+               autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+      </div>
+    </details>
+
+    <div class="credits">
+      Original game design by <button type="button" class="credit-name-btn" id="jindoblu-credit-btn"><span>JindoBlu</span></button> · remodeling &amp; design by <span>Salphamin</span> · networking setup by <span>gloop</span>
+    </div>
+  </div>
+
+  <!-- LOBBY -->
+  <div id="lobby-screen" class="screen">
+    <div class="brand" style="font-size:clamp(30px,7vw,44px);">ROOM LOBBY</div>
+    <div class="setup-card">
+      <div id="lobby-card"></div>
+      <div class="setup-error" id="lobby-error"></div>
+    </div>
+    <button class="icon-btn" id="lobby-back-btn">Cancel</button>
+  </div>
+
+  <!-- GAME -->
+  <div id="game-screen" class="screen">
+    <div class="topbar">
+      <div class="title-mini">Bongsho Bistar</div>
+      <div class="net-badge" id="net-badge"></div>
+      <button class="icon-btn" id="sound-toggle-btn" aria-pressed="false" title="Mute sound">🔊</button>
+      <button class="icon-btn" id="restart-btn">Leave</button>
+    </div>
+
+    <div class="player-chips" id="player-chips"></div>
+    <div class="territory-bar" id="territory-bar"></div>
+
+    <div class="board-wrap">
+      <div id="board"></div>
+    </div>
+
+    <div class="bottombar">
+      <span id="turn-info">TURN 1</span>
+      <span id="hint-info">TAP AN EMPTY TILE TO START</span>
+      <span id="move-info">MOVE 0</span>
+    </div>
+  </div>
+
+  <!-- WIN OVERLAY -->
+  <div id="win-overlay">
+    <div class="win-card">
+      <div class="win-dot" id="win-dot"></div>
+      <div class="win-title" id="win-title">Player wins!</div>
+      <div class="win-sub">Conquered the entire board</div>
+      <button class="start-btn" id="play-again-btn">PLAY AGAIN</button>
+    </div>
+  </div>
+
+  <!-- CREDIT OVERLAY -->
+  <div id="credit-overlay">
+    <div class="credit-card">
+      <div class="credit-title">JindoBlu</div>
+      <div class="credit-sub">Designed the original version of this game. JindoBlu also makes "1 2 3 4 Player Games," a collection of local multiplayer mini-games for up to four players on one device, available on the Play Store.</div>
+      <a class="credit-link" href="https://play.google.com/store/apps/details?id=com.JindoBlu.FourPlayers" target="_blank" rel="noopener noreferrer">View on Play Store</a>
+      <button class="start-btn" id="credit-close-btn">CLOSE</button>
+    </div>
+  </div>
+
+<!--
+  Subresource Integrity. Without this, whatever unpkg happens to serve runs with
+  full access to the page. The hash below is the SHA-384 of dist/peerjs.min.js
+  from the signed peerjs@1.5.4 npm tarball, so a tampered or swapped bundle is
+  refused by the browser and the game falls back to local play instead.
+
+  To regenerate it after a version bump:
+    curl -sL https://registry.npmjs.org/peerjs/-/peerjs-<ver>.tgz | tar -xzO package/dist/peerjs.min.js \
+      | openssl dgst -sha384 -binary | openssl base64 -A
+-->
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"
+        integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR"
+        crossorigin="anonymous"
+        referrerpolicy="no-referrer"></script>
+<script>
+(function(){
+  const COLORS = ['--p0','--p1','--p2','--p3'];
+  const NAMES  = ['Ruby','Cobalt','Amber','Jade'];
+  const root = document.documentElement;
+  const colorVal = i => getComputedStyle(root).getPropertyValue(COLORS[i]).trim();
+
+  // Player names, room codes, and other strings that arrive from a remote peer (or that
+  // get echoed back from a form field) are never trusted. Anything placed into innerHTML
+  // is passed through this first so a crafted name like "<img src=x onerror=...>" is
+  // rendered as inert text instead of being parsed as markup.
+  function escapeHtml(str){
+    return String(str == null ? '' : str).replace(/[&<>"'`=\/]/g, ch => ({
+      '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;',
+      '`':'&#96;', '=':'&#61;', '/':'&#47;'
+    }[ch]));
+  }
+
+  // Escaping stops a remote name from becoming markup, but it does nothing about
+  // characters that are invisible or that reorder the text around them. A peer can
+  // use a right-to-left override or zero width joiners to make their lobby entry
+  // render as somebody else's name, which is a spoofing problem rather than an
+  // injection one. Strip those ranges, collapse whitespace, then cap the length.
+  const UNSAFE_TEXT = /[\u0000-\u001F\u007F-\u009F\u00AD\u0600-\u0605\u061C\u180E\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF\uFFF9-\uFFFB]/g;
+  function sanitizeName(str, fallback){
+    const cleaned = String(str == null ? '' : str)
+      .replace(UNSAFE_TEXT, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 14);
+    return cleaned || fallback;
+  }
+
+  // Only the fixed charset used by genRoomCode() is ever a valid room code, so anything
+  // else typed into the join field is stripped before it's used as a PeerJS id suffix or
+  // echoed back into the lobby UI. The slice bounds the string so an oversized paste
+  // cannot be handed to the signalling server as a peer id.
+  function sanitizeRoomCode(str){
+    return String(str || '').slice(0, 32).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  }
+
+  let numPlayers = 2;
+  let boardSize = 8;
+
+  // ---------------- SOUND ----------------
+  // Every effect is synthesised with the Web Audio API rather than loaded from a file,
+  // so there is nothing here for the CSP's connect-src/img-src to worry about and no
+  // new origin is ever contacted. The context is created lazily on the first user
+  // gesture because browsers refuse to start audio before one anyway.
+  const Sound = (function(){
+    let ctx = null;
+    let muted = false;
+
+    function ensureCtx(){
+      if(ctx) return ctx;
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if(!Ctx) return null;
+      try{ ctx = new Ctx(); }catch(e){ ctx = null; }
+      return ctx;
+    }
+
+    // Resumes a suspended context. Call this from the click/tap handlers that already
+    // exist for gameplay, so audio "just works" without a separate splash screen.
+    function unlock(){
+      const c = ensureCtx();
+      if(c && c.state === 'suspended') c.resume().catch(()=>{});
+    }
+
+    // One short tone: attack straight to peak, exponential decay to silence. Reused
+    // for every effect below by stacking a few calls with different pitches/timings.
+    function tone(freq, {start=0, dur=0.14, type='sine', peak=0.18, glideTo=null} = {}){
+      if(muted) return;
+      const c = ensureCtx();
+      if(!c) return;
+      const t0 = c.currentTime + start;
+      const osc = c.createOscillator();
+      const gain = c.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t0);
+      if(glideTo) osc.frequency.exponentialRampToValueAtTime(glideTo, t0 + dur);
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(peak, t0 + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      osc.connect(gain);
+      gain.connect(c.destination);
+      osc.start(t0);
+      osc.stop(t0 + dur + 0.02);
+    }
+
+    // A quick burst of filtered noise, used for the explosion instead of a tone since
+    // a chain reaction should sound like a pop, not a musical note.
+    function noiseBurst({start=0, dur=0.16, peak=0.22, cutoff=1200} = {}){
+      if(muted) return;
+      const c = ensureCtx();
+      if(!c) return;
+      const t0 = c.currentTime + start;
+      const frames = Math.max(1, Math.floor(c.sampleRate * dur));
+      const buf = c.createBuffer(1, frames, c.sampleRate);
+      const data = buf.getChannelData(0);
+      for(let i=0;i<frames;i++) data[i] = (Math.random()*2 - 1) * (1 - i/frames);
+      const src = c.createBufferSource();
+      src.buffer = buf;
+      const filter = c.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(cutoff, t0);
+      const gain = c.createGain();
+      gain.gain.setValueAtTime(peak, t0);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(c.destination);
+      src.start(t0);
+      src.stop(t0 + dur + 0.02);
+    }
+
+    return {
+      unlock,
+      setMuted(v){ muted = !!v; },
+      isMuted(){ return muted; },
+      // A player successfully drops an orb on a tile.
+      tap(){ tone(520, {dur:0.09, type:'triangle', peak:0.16, glideTo:640}); },
+      // A tap was refused (not your tile, not your turn, board busy).
+      denied(){ tone(160, {dur:0.11, type:'square', peak:0.09}); },
+      // One wave of a chain reaction going off.
+      explode(){
+        noiseBurst({dur:0.18, peak:0.2});
+        tone(90, {dur:0.16, type:'sawtooth', peak:0.14, glideTo:45});
+      },
+      // Turn has passed to the next player.
+      turnChange(){ tone(760, {dur:0.1, type:'sine', peak:0.12}); },
+      // Somebody has won the game: a short rising arpeggio.
+      win(){
+        [523.25, 659.25, 784.0, 1046.5].forEach((f,i)=>{
+          tone(f, {start:i*0.09, dur:0.22, type:'triangle', peak:0.17});
+        });
+      }
+    };
+  })();
+
+  // ---------------- NETWORKING (PeerJS) ----------------
+  let selectedMode = 'local';      // 'local' | 'host' | 'join' (chosen on setup screen)
+  let netMode = 'local';           // 'local' | 'host' | 'client' (active once a game starts)
+  let myName = '';
+  let mySlot = 0;                  // this device's player index when netMode === 'client' (or 'host')
+  let roomCode = '';
+  let peer = null;
+  let hostConn = null;             // client's connection to the host
+  let connections = [];            // host only: DataConnections, connections[i] = slot i+1
+  let pendingConns = new Set();    // host only: inbound sockets that have not identified yet
+  let clientLobbyNames = [];       // client only: names broadcast by host while waiting
+
+  // Host side abuse limits. Anyone who learns a room code can open sockets against it,
+  // so unidentified connections are capped and expire, and every peer gets a message
+  // budget so a flood cannot pin the host's browser.
+  const MAX_PENDING_CONNS = 8;
+  const JOIN_GRACE_MS = 15000;
+  const MSG_BUDGET_PER_SEC = 25;
+
+  // ---------------- ICE / TURN ----------------
+  // Direct browser to browser links fail when either side sits behind a symmetric
+  // NAT, which is normal on mobile data and on ISPs that use carrier grade NAT.
+  // A TURN server relays the traffic in that case. STUN alone is not enough.
+  //
+  // Optional: paste a Metered key below for your own 500 MB/month relay quota.
+  // Free account at https://dashboard.metered.ca/signup, then App name + API key.
+  const TURN_ACCOUNT = '';   // e.g. 'yourappname'
+  const TURN_API_KEY = '';   // e.g. 'abcd1234...'
+
+  function turnAccount(){
+    const el = document.getElementById('turn-account');
+    return (el && el.value.trim()) || TURN_ACCOUNT;
+  }
+  function turnKey(){
+    const el = document.getElementById('turn-key');
+    return (el && el.value.trim()) || TURN_API_KEY;
+  }
+  function forceRelay(){
+    const el = document.getElementById('force-relay');
+    return !!(el && el.checked);
+  }
+
+  let iceServers = [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
+  ];
+  let turnReady = false;
+  let icePromise = null;
+
+  function b64(buf){
+    let s = '';
+    new Uint8Array(buf).forEach(b => s += String.fromCharCode(b));
+    return btoa(s);
+  }
+
+  // Open Relay publishes a shared auth secret for the standard coturn REST scheme,
+  // so short lived credentials can be derived in the browser without an account.
+  async function openRelayCreds(){
+    if(!window.crypto || !window.crypto.subtle) throw new Error('no subtle crypto');
+    const username = String(Math.floor(Date.now()/1000) + 12*3600);
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw', enc.encode('openrelayprojectsecret'),
+      { name:'HMAC', hash:'SHA-1' }, false, ['sign']
+    );
+    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(username));
+    return { username, credential: b64(sig) };
+  }
+
+  let turnSource = 'none';
+
+  // The credentials endpoint is third party, so its response is treated as untrusted
+  // input rather than as config. Anything that is not a well formed list of stun/turn
+  // entries is rejected outright and the game falls back to the built in servers.
+  const ICE_URL_RE = /^(?:stuns?|turns?):[A-Za-z0-9._~:\/?#\[\]@!$&'()*+,;=%-]{1,300}$/;
+  function sanitizeIceList(list){
+    if(!Array.isArray(list) || list.length === 0 || list.length > 20) return null;
+    const out = [];
+    for(const entry of list){
+      if(!entry || typeof entry !== 'object') return null;
+      const raw = Array.isArray(entry.urls) ? entry.urls : [entry.urls];
+      if(raw.length === 0 || raw.length > 10) return null;
+      const urls = [];
+      for(const u of raw){
+        if(typeof u !== 'string' || !ICE_URL_RE.test(u)) return null;
+        urls.push(u);
+      }
+      const clean = { urls };
+      if(entry.username != null) clean.username = String(entry.username).slice(0, 512);
+      if(entry.credential != null) clean.credential = String(entry.credential).slice(0, 512);
+      out.push(clean);
+    }
+    return out;
+  }
+
+  async function loadIceServers(){
+    if(icePromise) return icePromise;
+    icePromise = (async () => {
+      iceServers = [
+        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
+      ];
+      turnReady = false;
+      turnSource = 'none';
+
+      const acct = turnAccount(), key = turnKey();
+      // Metered subdomains only allow a limited charset; reject anything else outright
+      // rather than interpolating unvalidated input into the request URL.
+      if(acct && key && /^[a-zA-Z0-9-]{1,63}$/.test(acct)){
+        try{
+          // The key is a bearer secret. no-referrer keeps it out of any downstream
+          // Referer header and no-store keeps the response out of the disk cache.
+          const url = `https://${acct}.metered.live/api/v1/turn/credentials?apiKey=${encodeURIComponent(key)}`;
+          const res = await fetch(url, {
+            method: 'GET',
+            mode: 'cors',
+            cache: 'no-store',
+            credentials: 'omit',
+            referrerPolicy: 'no-referrer'
+          });
+          if(!res.ok) throw new Error('http ' + res.status);
+          const clean = sanitizeIceList(await res.json());
+          if(clean){
+            iceServers = clean;
+            turnReady = true;
+            turnSource = 'your Metered account';
+            return iceServers;
+          }
+          turnSource = 'account rejected';
+        }catch(e){ turnSource = 'account unreachable'; }
+      } else if(acct && key){
+        turnSource = 'account name invalid';
+      }
+
+      try{
+        const { username, credential } = await openRelayCreds();
+        const host = 'staticauth.openrelay.metered.ca';
+        iceServers = iceServers.concat([
+          { urls:`turn:${host}:80`, username, credential },
+          { urls:`turn:${host}:80?transport=tcp`, username, credential },
+          { urls:`turn:${host}:443`, username, credential },
+          { urls:`turns:${host}:443?transport=tcp`, username, credential }
+        ]);
+        turnReady = true;
+        if(turnSource === 'none') turnSource = 'shared open relay';
+      }catch(e){ turnSource = 'no crypto support'; }
+      return iceServers;
+    })();
+    return icePromise;
+  }
+
+  function peerOpts(){
+    return {
+      debug: 0,
+      config: {
+        iceServers,
+        iceCandidatePoolSize: 4,
+        iceTransportPolicy: forceRelay() ? 'relay' : 'all'
+      }
+    };
+  }
+
+  // ---------------- DIAGNOSTICS ----------------
+  // Gathers candidates against the same ICE config the game uses and reports what
+  // the browser actually got, which is the only reliable way to tell whether the
+  // relay is alive. Credentials being present is not the same as being accepted.
+  function runIceTest(onProgress){
+    return loadIceServers().then(()=> new Promise(resolve=>{
+      const counts = { host:0, srflx:0, relay:0 };
+      const errors = new Map();
+      let pc;
+      try{
+        pc = new RTCPeerConnection({ iceServers, iceTransportPolicy:'all' });
+      }catch(e){
+        resolve({ counts, errors:[], fatal:'WebRTC is unavailable in this browser.' });
+        return;
+      }
+      pc.createDataChannel('probe');
+
+      pc.onicecandidate = e=>{
+        if(!e.candidate || !e.candidate.candidate) return;
+        const m = e.candidate.candidate.match(/ typ (\w+)/);
+        const t = e.candidate.type || (m && m[1]);
+        if(counts[t] !== undefined) counts[t]++;
+        if(onProgress) onProgress(counts);
+      };
+      pc.onicecandidateerror = e=>{
+        const url = (e.url || '').split('?')[0];
+        const code = e.errorCode;
+        if(code === 701) return; // benign, one address in a multi address server failed
+        errors.set(code + ' ' + url, (e.errorText || '').slice(0, 90));
+      };
+
+      const finish = ()=>{
+        if(!pc) return;
+        try{ pc.close(); }catch(_){}
+        pc = null;
+        resolve({
+          counts,
+          errors: [...errors].map(([k,v])=> v ? k + ' — ' + v : k),
+          fatal: null
+        });
+      };
+      pc.onicegatheringstatechange = ()=>{ if(pc && pc.iceGatheringState === 'complete') finish(); };
+      setTimeout(finish, 9000);
+
+      pc.createOffer().then(o=>pc && pc.setLocalDescription(o)).catch(()=>finish());
+    }));
+  }
+
+  function verdictFor(res){
+    const c = res.counts;
+    if(res.fatal) return { cls:'bad', text: res.fatal };
+    if(c.relay > 0){
+      return { cls:'good', text:'Relay is working. Rooms should connect even across difficult networks.' };
+    }
+    const auth = res.errors.some(e=>/^40[13]/.test(e));
+    if(auth){
+      return { cls:'bad', text:'The relay refused the credentials. This is the blocker. Use your own Metered key below.' };
+    }
+    if(c.srflx > 0){
+      return { cls:'bad', text:'STUN works but no relay was reachable. Direct links only, which fails behind carrier NAT.' };
+    }
+    if(c.host > 0){
+      return { cls:'bad', text:'Only local addresses gathered. Something is blocking outbound UDP, likely a firewall or VPN.' };
+    }
+    return { cls:'bad', text:'No candidates at all. WebRTC appears to be blocked entirely.' };
+  }
+
+  const iceTestBtn = document.getElementById('ice-test-btn');
+  if(iceTestBtn){
+    iceTestBtn.addEventListener('click', ()=>{
+      const out = document.getElementById('ice-report');
+      iceTestBtn.disabled = true;
+      iceTestBtn.textContent = 'Testing…';
+      out.className = 'net-report';
+      out.textContent = 'Gathering candidates…';
+      icePromise = null;
+      runIceTest(c=>{
+        out.textContent = `local ${c.host}   public ${c.srflx}   relay ${c.relay}\ngathering…`;
+      }).then(res=>{
+        const v = verdictFor(res);
+        let txt = `local ${res.counts.host}   public ${res.counts.srflx}   relay ${res.counts.relay}\n`;
+        txt += `source ${turnSource}\n\n${v.text}`;
+        if(res.errors.length) txt += '\n\nserver replies\n' + res.errors.join('\n');
+        out.textContent = txt;
+        out.className = 'net-report ' + v.cls;
+        iceTestBtn.disabled = false;
+        iceTestBtn.textContent = 'Run connection test';
+        icePromise = null;
+      });
+    });
+  }
+
+  const ROOM_PREFIX = 'cwars-';
+  function genRoomCode(){
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let s = '';
+    for(let i=0;i<4;i++) s += chars[Math.floor(Math.random()*chars.length)];
+    return s;
+  }
+  function showSetupError(msg){
+    ['setup-error','lobby-error'].forEach(id=>{
+      const el = document.getElementById(id);
+      if(el) el.textContent = msg || '';
+    });
+  }
+  function bounceToSetup(msg){
+    if(tearingDown) return;
+    cleanupNetwork();
+    showScreen('setup-screen');
+    showSetupError(msg);
+  }
+  function showScreen(id){
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+  let tearingDown = false;
+  function cleanupNetwork(){
+    tearingDown = true;
+    pendingConns.forEach(c=>{ try{ clearTimeout(c._idleTimer); c.close(); }catch(e){} });
+    pendingConns.clear();
+    if(peer){ try{ peer.destroy(); }catch(e){} }
+    peer = null; hostConn = null; connections = []; clientLobbyNames = [];
+    pendingLeaves = [];
+    netMode = 'local';
+    mySlot = 0;
+    hostRetries = 0;
+    clearTimeout(pendingMoveTimer);
+    clearTimeout(joinTimer);
+    lobbyNote = '';
+    setTimeout(()=>{ tearingDown = false; }, 0);
+  }
+
+  document.getElementById('mode-choices').addEventListener('click', e=>{
+    const btn = e.target.closest('.choice-btn');
+    if(!btn) return;
+    selectedMode = btn.dataset.mode;
+    [...btn.parentElement.children].forEach(c=>c.classList.remove('selected'));
+    btn.classList.add('selected');
+    document.getElementById('players-size-fields').style.display = (selectedMode==='join') ? 'none' : '';
+    document.getElementById('host-name-field').style.display = (selectedMode==='host') ? '' : 'none';
+    document.getElementById('join-fields').style.display = (selectedMode==='join') ? '' : 'none';
+    showSetupError('');
+    const sb = document.getElementById('start-btn');
+    sb.textContent = selectedMode==='local' ? 'START GAME' : selectedMode==='host' ? 'CREATE ROOM' : 'JOIN ROOM';
+  });
+
+  // ---- HOST ----
+  let hostRetries = 0;
+
+  async function setupHostPeer(){
+    await loadIceServers();
+    if(netMode !== 'host') return;
+    peer = new Peer(ROOM_PREFIX + roomCode, peerOpts());
+    peer.on('open', ()=>{ showSetupError(''); renderHostLobby(); });
+    peer.on('connection', conn=>{
+      // A socket that never sends a join message occupies memory and an ICE agent
+      // for nothing, so the number in flight is capped and each one is given a
+      // grace window to identify itself before it is dropped.
+      if(pendingConns.size >= MAX_PENDING_CONNS){ try{ conn.close(); }catch(e){} return; }
+      pendingConns.add(conn);
+      conn._idleTimer = setTimeout(()=>{
+        pendingConns.delete(conn);
+        if(connections.indexOf(conn) === -1){ try{ conn.close(); }catch(e){} }
+      }, JOIN_GRACE_MS);
+
+      setLobbyNote('Someone is connecting…');
+      watchIce(conn, 'host');
+      conn.on('open', ()=>{ setLobbyNote('Handshake complete, waiting for their name…'); });
+      conn.on('data', data=>handleHostData(conn, data));
+      conn.on('close', ()=>{
+        clearTimeout(conn._idleTimer);
+        pendingConns.delete(conn);
+        handleClientGone(conn);
+      });
+      conn.on('error', ()=>{
+        clearTimeout(conn._idleTimer);
+        pendingConns.delete(conn);
+        setLobbyNote('A player failed to connect. They can try the code again.');
+      });
+    });
+    peer.on('error', err=>{
+      if(err.type === 'unavailable-id' && hostRetries < 5){
+        hostRetries++;
+        try{ peer.destroy(); }catch(e){}
+        roomCode = genRoomCode();
+        setupHostPeer();
+        return;
+      }
+      if(err.type === 'peer-unavailable') return;
+      showSetupError('Connection error, ' + err.type + '. Try creating the room again.');
+    });
+  }
+
+  function inGame(){
+    return document.getElementById('game-screen').classList.contains('active');
+  }
+
+  // Slots that dropped out while a chain was still resolving.
+  let pendingLeaves = [];
+
+  // A player who leaves used to keep their tiles forever. Nothing could capture them
+  // except a chain reaching that far, so the survivors had to clear a ghost's territory
+  // before the win condition could ever fire. Their tiles now go back to neutral.
+  function removePlayerFromGame(slot){
+    if(!players || !players[slot] || !board) return;
+    players[slot].alive = false;
+    for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+      const cell = board[r][c];
+      if(cell.owner === slot){ cell.owner = null; cell.count = 0; }
+    }
+    paintBoard();
+    renderChipAliveStates();
+    if(current === slot) advanceTurn();
+    broadcastState();
+    const stillIn = players.filter(p=>p.alive);
+    if(stillIn.length === 1) declareWinner(players.indexOf(stillIn[0]));
+  }
+
+  function flushPendingLeaves(){
+    while(pendingLeaves.length) removePlayerFromGame(pendingLeaves.shift());
+  }
+
+  function handleClientGone(conn){
+    if(tearingDown || netMode !== 'host') return;
+    const slot = conn.slot;
+    connections = connections.filter(c => c !== conn);
+    if(inGame()){
+      if(slot != null && players && players[slot]){
+        // Mid chain the board is being mutated wave by wave, so the removal is queued
+        // and applied once the cascade has finished rather than cutting into it.
+        if(busy) pendingLeaves.push(slot);
+        else removePlayerFromGame(slot);
+      }
+      return;
+    }
+    connections.forEach((c,i)=>{
+      c.slot = i+1;
+      if(c.open) c.send({type:'assigned', slot:c.slot});
+    });
+    broadcastLobby();
+    renderHostLobby();
+  }
+
+  // A move the host declines (wrong turn, out of bounds, or arriving while a chain is
+  // still resolving) used to disappear in silence, leaving the sender locked out until
+  // their local four second timeout expired. Every refusal now gets an explicit answer
+  // so the client unlocks straight away and shakes the tile that was refused.
+  function handleRemoteMove(conn, r, c){
+    const slot = conn ? conn.slot : null;
+    const refuse = ()=>{ if(conn && conn.open){ try{ conn.send({type:'reject', r, c}); }catch(e){} } };
+    if(netMode !== 'host' || !inGame()) return refuse();
+    if(typeof slot !== 'number' || slot !== current) return refuse();
+    if(!Number.isInteger(r) || !Number.isInteger(c)) return refuse();
+    if(r < 0 || r >= rows || c < 0 || c >= cols) return refuse();
+    if(!applyMove(slot, r, c)) refuse();
+  }
+
+  // Simple per-connection token bucket. Every inbound message costs one token and the
+  // budget refills each second, so a peer spamming moves or joins gets its traffic
+  // dropped rather than being allowed to drive re-renders in a tight loop.
+  function withinBudget(conn){
+    const now = Date.now();
+    if(!conn._rl || now - conn._rl.start >= 1000) conn._rl = { start: now, count: 0 };
+    conn._rl.count++;
+    return conn._rl.count <= MSG_BUDGET_PER_SEC;
+  }
+
+  function handleHostData(conn, data){
+    if(!data || typeof data !== 'object') return;
+    if(!withinBudget(conn)) return;
+
+    if(data.type === 'join'){
+      if(inGame()){ conn.send({type:'full'}); return; }
+      if(conn._joined) return;  // a peer identifies once, repeats are ignored
+      if(connections.indexOf(conn) === -1){
+        if(connections.length >= numPlayers-1){ conn.send({type:'full'}); return; }
+        connections.push(conn);
+        conn._joined = true;
+        clearTimeout(conn._idleTimer);
+        pendingConns.delete(conn);
+        conn.slot = connections.length; // host is slot 0
+        conn.playerName = sanitizeName(data.name, 'Player ' + (conn.slot + 1));
+        conn.send({type:'assigned', slot: conn.slot});
+      }
+      broadcastLobby();
+      renderHostLobby();
+    } else if(data.type === 'move'){
+      handleRemoteMove(conn, data.r, data.c);
+    }
+  }
+
+  function broadcastLobby(){
+    const names = [myName || 'Host', ...connections.map(c=>c.playerName)];
+    broadcastToAll({type:'lobby', names, numPlayers});
+  }
+  function broadcastToAll(msg){
+    connections.forEach(c=>{ if(c.open) c.send(msg); });
+  }
+  function broadcastState(){
+    if(netMode !== 'host') return;
+    broadcastToAll({type:'state', payload: snapshotState()});
+  }
+
+  function renderHostLobby(){
+    const card = document.getElementById('lobby-card');
+    if(!card) return;
+    const opened = peer && peer.open;
+    const joined = connections.length;
+    let html = `<div class="lobby-status">${opened ? 'Share this code with friends' : 'Setting up room…'}</div>`;
+    // Escaped even though neither value is remote controlled today. The client
+    // renderer already escapes both, and leaving one path raw is how a future
+    // edit to setLobbyNote quietly turns a status string into an injection point.
+    html += `<div class="room-code-display" id="room-code-el" title="Tap to copy">${opened ? escapeHtml(roomCode) : '····'}</div>`;
+    html += `<div class="lobby-note" id="lobby-note">${escapeHtml(lobbyNote)}</div>`;
+    html += `<div class="lobby-list">`;
+    for(let i=0;i<numPlayers;i++){
+      const name = i===0 ? ((myName||'Host')+' (you)') : (connections[i-1] ? connections[i-1].playerName : null);
+      html += `<div class="lobby-slot ${name?'':'empty'}"><span class="dot" style="background:var(${COLORS[i]})"></span>${escapeHtml(name) || 'Waiting for player '+(i+1)+'…'}</div>`;
+    }
+    html += `</div>`;
+    const ready = joined >= numPlayers-1;
+    html += `<button class="start-btn" id="lobby-start-btn" ${ready?'':'disabled'}>${ready ? 'START GAME' : 'WAITING FOR PLAYERS…'}</button>`;
+    card.innerHTML = html;
+    const codeEl = document.getElementById('room-code-el');
+    if(codeEl && opened){
+      codeEl.addEventListener('click', ()=>{
+        navigator.clipboard?.writeText(roomCode).then(()=>{
+          codeEl.textContent = 'Copied!';
+          setTimeout(()=>{ codeEl.textContent = roomCode; }, 900);
+        }).catch(()=>{
+          // Denied permission or an insecure context. The code is selectable anyway.
+          codeEl.textContent = 'Copy failed';
+          setTimeout(()=>{ codeEl.textContent = roomCode; }, 1200);
+        });
+      });
+    }
+    if(ready){
+      document.getElementById('lobby-start-btn').addEventListener('click', ()=>{
+        netMode = 'host';
+        mySlot = 0;
+        const names = [myName || 'Host', ...connections.map(c=>c.playerName)];
+        showScreen('game-screen');
+        initGame(numPlayers, boardSize, boardSize, names);
+        broadcastState();
+      });
+    }
+  }
+
+  // ---- CLIENT ----
+  let joinTimer = null;
+  let lobbyNote = '';
+
+  function setLobbyNote(msg){
+    lobbyNote = msg || '';
+    const el = document.getElementById('lobby-note');
+    if(el) el.textContent = lobbyNote;
+  }
+
+  // Surfaces the real WebRTC state instead of leaving the user on a silent spinner.
+  function watchIce(conn, role){
+    const attach = ()=>{
+      const pc = conn.peerConnection;
+      if(!pc) return false;
+      pc.addEventListener('iceconnectionstatechange', ()=>{
+        const s = pc.iceConnectionState;
+        if(s === 'checking') setLobbyNote('Negotiating a route…');
+        else if(s === 'connected' || s === 'completed') setLobbyNote('');
+        else if(s === 'failed'){
+          setLobbyNote(turnReady
+            ? 'Your networks refused a direct link and the relay could not carry it either.'
+            : 'Your networks refused a direct link and no relay was available.');
+          if(role === 'client'){
+            clearTimeout(joinTimer);
+            renderClientLobby();
+          }
+        }
+      });
+      return true;
+    };
+    if(!attach()) setTimeout(attach, 300);
+  }
+
+  function setupClientPeer(){
+    clearTimeout(joinTimer);
+    setLobbyNote('Reaching the signalling server…');
+    renderClientLobby();
+
+    // Hard ceiling so a silent WebRTC failure cannot hang the screen forever.
+    joinTimer = setTimeout(()=>{
+      if(netMode !== 'client') return;
+      if(hostConn && hostConn.open) return;
+      setLobbyNote('Gave up after 30 seconds. See the note below.');
+      renderClientLobby(true);
+    }, 30000);
+
+    loadIceServers().then(()=>{
+      if(netMode !== 'client') return;
+      peer = new Peer(peerOpts());
+
+      peer.on('open', ()=>{
+        setLobbyNote('Signalling server reached. Calling the room…');
+        hostConn = peer.connect(ROOM_PREFIX + roomCode, { reliable:true });
+        watchIce(hostConn, 'client');
+        hostConn.on('open', ()=>{
+          clearTimeout(joinTimer);
+          setLobbyNote('');
+          hostConn.send({type:'join', name: myName});
+          renderClientLobby();
+        });
+        hostConn.on('data', data=>handleClientData(data));
+        hostConn.on('close', ()=>{
+          bounceToSetup('Lost connection to the host.');
+        });
+        hostConn.on('error', ()=>{
+          bounceToSetup('Could not reach that room. Check the code and try again.');
+        });
+      });
+
+      peer.on('error', err=>{
+        if(err.type === 'peer-unavailable'){
+          clearTimeout(joinTimer);
+          bounceToSetup('No room with that code is open right now.');
+        } else if(err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error'){
+          clearTimeout(joinTimer);
+          bounceToSetup('Could not reach the signalling server. Check your connection and try again.');
+        } else {
+          setLobbyNote('Connection error, ' + err.type + '.');
+        }
+      });
+    });
+  }
+
+  function handleClientData(data){
+    if(!data || typeof data !== 'object') return;
+    if(data.type === 'full'){
+      bounceToSetup('That room is full or already playing.');
+    } else if(data.type === 'assigned'){
+      if(!Number.isInteger(data.slot) || data.slot < 0 || data.slot >= COLORS.length) return;
+      mySlot = data.slot;
+      renderClientLobby();
+    } else if(data.type === 'lobby'){
+      if(!Array.isArray(data.names) || !Number.isInteger(data.numPlayers)) return;
+      clientLobbyNames = data.names.slice(0, COLORS.length).map(n => sanitizeName(n, ''));
+      numPlayers = Math.min(Math.max(data.numPlayers, 2), COLORS.length);
+      renderClientLobby();
+    } else if(data.type === 'state'){
+      const firstTime = !inGame();
+      if(!applyState(data.payload, firstTime)) return;
+      if(firstTime) showScreen('game-screen');
+    } else if(data.type === 'reject'){
+      // The host declined our last tap. Unlock and show why on the tile itself.
+      busy = false;
+      clearTimeout(pendingMoveTimer);
+      if(inGame() && board){
+        const boardEl = document.getElementById('board');
+        if(boardEl && Number.isInteger(data.r) && Number.isInteger(data.c) &&
+           data.r >= 0 && data.r < rows && data.c >= 0 && data.c < cols){
+          deny(boardEl.children[data.r*cols + data.c]);
+        }
+        updateBottom();
+      }
+    } else if(data.type === 'fx'){
+      // Clients used to jump straight from one board snapshot to the next, so only
+      // the host ever saw the chain animate. The host now narrates each wave and
+      // the client replays it with the same timings.
+      if(!inGame() || !board) return;
+      if(!Array.isArray(data.cells) || data.cells.length > 400) return;
+      if(!Number.isInteger(data.player) || data.player < 0 || data.player >= COLORS.length) return;
+      const cells = [];
+      for(const pair of data.cells){
+        if(!Array.isArray(pair) || pair.length !== 2) return;
+        const r = pair[0], c = pair[1];
+        if(!Number.isInteger(r) || !Number.isInteger(c)) return;
+        if(r < 0 || r >= rows || c < 0 || c >= cols) return;
+        cells.push({r, c});
+      }
+      fxExplode(cells, data.player);
+      setTimeout(()=>{ fxClear(cells); fxLand(cells); }, 300);
+    } else if(data.type === 'winner'){
+      if(!Number.isInteger(data.idx) || data.idx < 0 || data.idx >= (players ? players.length : 0)) return;
+      declareWinner(data.idx);
+    } else if(data.type === 'closed'){
+      bounceToSetup('The host ended the game.');
+    }
+  }
+
+  function renderClientLobby(timedOut){
+    const card = document.getElementById('lobby-card');
+    if(!card) return;
+    const connected = !!(hostConn && hostConn.open);
+    let html = `<div class="lobby-status">${connected ? 'Waiting for the host to start…' : 'Connecting to room '+escapeHtml(roomCode)+'…'}</div>`;
+    html += `<div class="room-code-display" style="font-size:26px;">${escapeHtml(roomCode)}</div>`;
+    html += `<div class="lobby-note" id="lobby-note">${escapeHtml(lobbyNote)}</div>`;
+    html += `<div class="lobby-list">`;
+    const total = numPlayers || Math.max(clientLobbyNames.length, 2);
+    for(let i=0;i<total;i++){
+      const name = clientLobbyNames[i];
+      html += `<div class="lobby-slot ${name?'':'empty'}"><span class="dot" style="background:var(${COLORS[i]})"></span>${escapeHtml(name) || 'Waiting…'}${i===mySlot ? ' (you)':''}</div>`;
+    }
+    html += `</div>`;
+    if(timedOut){
+      html += `<div class="lobby-help">
+        Your two networks would not open a direct link. Things that usually fix it, in order.
+        <ul>
+          <li>Both of you switch to a different network, for example phone hotspot instead of home wifi.</li>
+          <li>Turn off any VPN on either side.</li>
+          <li>Ask the host to create a fresh room, then retry.</li>
+        </ul>
+        Relay source ${escapeHtml(turnReady ? turnSource : 'none available')}. Open Network tools on the
+        setup screen and run the connection test to see exactly what failed.
+      </div>`;
+      html += `<button class="start-btn" id="retry-join-btn">TRY AGAIN</button>`;
+    }
+    card.innerHTML = html;
+    const retry = document.getElementById('retry-join-btn');
+    if(retry){
+      retry.addEventListener('click', ()=>{
+        if(peer){ try{ peer.destroy(); }catch(e){} }
+        peer = null; hostConn = null;
+        icePromise = null;
+        setupClientPeer();
+      });
+    }
+  }
+
+  document.getElementById('lobby-back-btn').addEventListener('click', ()=>{
+    if(netMode==='host') broadcastToAll({type:'closed'});
+    cleanupNetwork();
+    showScreen('setup-screen');
+  });
+
+  function isValidStatePayload(payload){
+    if(!payload || typeof payload !== 'object') return false;
+    const { rows:pr, cols:pc, board:pb, players:pp, current:cur, moveNum:mn } = payload;
+    if(!Number.isInteger(pr) || pr < 4 || pr > 20) return false;
+    if(!Number.isInteger(pc) || pc < 4 || pc > 20) return false;
+    if(!Array.isArray(pb) || pb.length !== pr) return false;
+    for(const row of pb){
+      if(!Array.isArray(row) || row.length !== pc) return false;
+      for(const cell of row){
+        if(!cell || typeof cell !== 'object') return false;
+        if(!(cell.owner === null || (Number.isInteger(cell.owner) && cell.owner >= 0 && cell.owner < COLORS.length))) return false;
+        if(!Number.isInteger(cell.count) || cell.count < 0 || cell.count > 50) return false;
+      }
+    }
+    if(!Array.isArray(pp) || pp.length < 2 || pp.length > COLORS.length) return false;
+    for(const p of pp){
+      if(!p || typeof p !== 'object') return false;
+      if(typeof p.alive !== 'boolean' || typeof p.moved !== 'boolean') return false;
+    }
+    if(!Number.isInteger(cur) || cur < 0 || cur >= pp.length) return false;
+    if(!Number.isInteger(mn) || mn < 0) return false;
+    if(payload.resolving !== undefined && typeof payload.resolving !== 'boolean') return false;
+    return true;
+  }
+
+  function applyState(payload, isInitial){
+    if(!isValidStatePayload(payload)) return false;
+    rows = payload.rows; cols = payload.cols;
+    board = payload.board.map(row=>row.map(cell=>({owner:cell.owner, count:cell.count})));
+    players = payload.players.map((p,i)=>({id:i, name:sanitizeName(p.name, NAMES[i] || ('Player '+(i+1))), alive:p.alive, moved:p.moved}));
+    current = payload.current;
+    moveNum = payload.moveNum;
+    roundsCompleted = !!payload.roundsCompleted;
+
+    // The host broadcasts a snapshot after every wave of a chain reaction, not just
+    // at the end of the move. Clearing busy on each of those let a client tap again
+    // mid-chain, and the host would then drop that tap on the floor. Mirror the
+    // host's own resolving state instead, so the client stays locked until the
+    // chain has actually finished.
+    busy = !!payload.resolving;
+    if(!busy) clearTimeout(pendingMoveTimer);
+    if(isInitial){ lastAnnouncedTurn = null; renderChips(); renderBoardGrid(); }
+    else { paintBoard(); }
+    renderChipAliveStates();
+    updateBottom();
+    return true;
+  }
+
+  function snapshotState(){
+    return {
+      rows, cols,
+      board: board.map(row=>row.map(cell=>({owner:cell.owner, count:cell.count}))),
+      players: players.map(p=>({name:p.name, alive:p.alive, moved:p.moved})),
+      current, moveNum, roundsCompleted,
+      resolving: !!busy
+    };
+  }
+
+  // ---------------- SETUP SCREEN ----------------
+  const playerChoicesEl = document.getElementById('player-choices');
+  [2,3,4].forEach(n=>{
+    const btn = document.createElement('button');
+    btn.className = 'choice-btn' + (n===2 ? ' selected':'');
+    btn.dataset.n = n;
+    const swatches = document.createElement('div');
+    swatches.className = 'swatch-row';
+    for(let i=0;i<n;i++){
+      const d = document.createElement('span');
+      d.className='swatch-dot';
+      d.style.background = `var(${COLORS[i]})`;
+      swatches.appendChild(d);
+    }
+    btn.appendChild(swatches);
+    const label = document.createElement('div');
+    label.textContent = n + ' Players';
+    btn.appendChild(label);
+    btn.addEventListener('click', ()=>{
+      numPlayers = n;
+      [...playerChoicesEl.children].forEach(c=>c.classList.remove('selected'));
+      btn.classList.add('selected');
+    });
+    playerChoicesEl.appendChild(btn);
+  });
+
+  document.getElementById('size-choices').addEventListener('click', e=>{
+    const btn = e.target.closest('.choice-btn');
+    if(!btn) return;
+    boardSize = parseInt(btn.dataset.size);
+    [...btn.parentElement.children].forEach(c=>c.classList.remove('selected'));
+    btn.classList.add('selected');
+  });
+
+  document.getElementById('start-btn').addEventListener('click', ()=>{
+    showSetupError('');
+    cleanupNetwork();
+    icePromise = null;
+
+    if(selectedMode === 'local'){
+      netMode = 'local';
+      mySlot = 0;
+      showScreen('game-screen');
+      initGame(numPlayers, boardSize, boardSize);
+      return;
+    }
+
+    if(typeof Peer === 'undefined'){
+      showSetupError('The online library did not load or failed its integrity check. Check your internet and refresh. Local play still works.');
+      return;
+    }
+
+    if(selectedMode === 'host'){
+      myName = sanitizeName(document.getElementById('host-name').value, 'Host');
+      roomCode = genRoomCode();
+      hostRetries = 0;
+      netMode = 'host';
+      showScreen('lobby-screen');
+      renderHostLobby();
+      setupHostPeer();
+      return;
+    }
+
+    myName = sanitizeName(document.getElementById('join-name').value, 'Player');
+    const code = sanitizeRoomCode(document.getElementById('join-code').value);
+    if(code.length !== 4){
+      showSetupError('Room codes are 4 characters long, letters and numbers only.');
+      return;
+    }
+    roomCode = code;
+    netMode = 'client';
+    showScreen('lobby-screen');
+    renderClientLobby();
+    setupClientPeer();
+  });
+
+  const soundToggleBtn = document.getElementById('sound-toggle-btn');
+  if(soundToggleBtn){
+    soundToggleBtn.addEventListener('click', ()=>{
+      Sound.unlock();
+      const next = !Sound.isMuted();
+      Sound.setMuted(next);
+      soundToggleBtn.textContent = next ? '🔇' : '🔊';
+      soundToggleBtn.setAttribute('aria-pressed', String(next));
+      soundToggleBtn.title = next ? 'Unmute sound' : 'Mute sound';
+    });
+  }
+
+  document.getElementById('restart-btn').addEventListener('click', backToSetup);
+  document.getElementById('play-again-btn').addEventListener('click', ()=>{
+    document.getElementById('win-overlay').classList.remove('active');
+    backToSetup();
+  });
+
+  const jindobluBtn = document.getElementById('jindoblu-credit-btn');
+  const creditOverlay = document.getElementById('credit-overlay');
+  if(jindobluBtn && creditOverlay){
+    jindobluBtn.addEventListener('click', ()=>{ creditOverlay.classList.add('active'); });
+    document.getElementById('credit-close-btn').addEventListener('click', ()=>{ creditOverlay.classList.remove('active'); });
+    creditOverlay.addEventListener('click', (e)=>{ if(e.target === creditOverlay) creditOverlay.classList.remove('active'); });
+  }
+
+  function backToSetup(){
+    if(netMode === 'host') broadcastToAll({type:'closed'});
+    cleanupNetwork();
+    document.getElementById('win-overlay').classList.remove('active');
+    showScreen('setup-screen');
+    showSetupError('');
+  }
+
+  // ---------------- GAME STATE ----------------
+  let rows, cols, board, players, current, moveNum, roundsCompleted, busy;
+
+  function initGame(np, r, c, names){
+    rows = r; cols = c;
+    board = Array.from({length:rows}, ()=> Array.from({length:cols}, ()=>({owner:null, count:0})));
+    players = Array.from({length:np}, (_,i)=>({
+      id:i,
+      name:(names && names[i]) ? names[i] : NAMES[i],
+      alive:true,
+      moved:false
+    }));
+    current = 0;
+    moveNum = 0;
+    roundsCompleted = false;
+    busy = false;
+    lastAnnouncedTurn = null;
+    renderChips();
+    renderBoardGrid();
+    updateBottom();
+  }
+
+  function renderChips(){
+    const wrap = document.getElementById('player-chips');
+    wrap.innerHTML = '';
+    players.forEach((p,i)=>{
+      const chip = document.createElement('div');
+      chip.className = 'chip' + (i===current ? ' active':'') + (!p.alive ? ' eliminated':'');
+      chip.id = 'chip-'+i;
+      chip.innerHTML = `<span class="dot" style="background:var(${COLORS[i]})"></span>
+                         <span class="name">${escapeHtml(p.name)}</span>
+                         <span class="stat" id="chip-stat-${i}">0</span>`;
+      wrap.appendChild(chip);
+    });
+  }
+
+  function renderBoardGrid(){
+    const boardEl = document.getElementById('board');
+    boardEl.innerHTML = '';
+    boardEl.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    boardEl.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.dataset.r = r;
+        cell.dataset.c = c;
+        // Cells were plain divs, so the whole board was unreachable without a mouse
+        // or touchscreen. They now announce themselves and take Enter, Space, and
+        // arrow keys for moving focus around the grid.
+        cell.setAttribute('role', 'button');
+        cell.tabIndex = 0;
+        cell.setAttribute('aria-label', `row ${r+1} column ${c+1}, empty`);
+        cell.addEventListener('click', onCellClick);
+        cell.addEventListener('keydown', onCellKey);
+        boardEl.appendChild(cell);
+      }
+    }
+    paintBoard();
+  }
+
+  const PIP_POS = {
+    1: [[50,50]],
+    2: [[32,32],[68,68]],
+    3: [[32,32],[68,32],[50,72]],
+    4: [[30,30],[70,30],[30,70],[70,70]]
+  };
+
+  function paintBoard(){
+    const boardEl = document.getElementById('board');
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        const cellData = board[r][c];
+        const cellEl = boardEl.children[r*cols+c];
+
+        // Skip cells whose owner/count haven't changed since the last paint,
+        // so repainting one part of the board doesn't replay the pip-pop
+        // animation on untouched cells elsewhere (incl. opponents' cells).
+        const paintKey = cellData.owner + ':' + cellData.count;
+        if(cellEl.dataset.paintKey === paintKey) continue;
+        cellEl.dataset.paintKey = paintKey;
+
+        cellEl.querySelectorAll('.pip, .pip-count').forEach(p=>p.remove());
+        const oldRing = cellEl.querySelector('.ring');
+        if(oldRing) oldRing.remove();
+        if(cellData.count > 0 && cellData.owner !== null){
+          const color = `var(${COLORS[cellData.owner]})`;
+          cellEl.style.setProperty('--owner-color', color);
+          cellEl.classList.add('owned');
+          cellEl.classList.toggle('crit', cellData.count >= 3);
+          const positions = PIP_POS[Math.min(cellData.count,4)];
+          positions.forEach(([x,y])=>{
+            const pip = document.createElement('div');
+            pip.className = 'pip';
+            pip.style.left = x+'%';
+            pip.style.top = y+'%';
+            pip.style.width = '22%';
+            pip.style.height = '22%';
+            pip.style.background = color;
+            cellEl.appendChild(pip);
+          });
+          // Several neighbours can land on the same tile in one wave, pushing it past
+          // the 4 pip layout. Show the real number so an overloaded tile is readable.
+          if(cellData.count > 4){
+            const badge = document.createElement('div');
+            badge.className = 'pip-count';
+            badge.textContent = cellData.count;
+            cellEl.appendChild(badge);
+          }
+          const who = players[cellData.owner] ? players[cellData.owner].name : 'player ' + (cellData.owner+1);
+          cellEl.setAttribute('aria-label',
+            `row ${r+1} column ${c+1}, ${who}, ${cellData.count} orb${cellData.count===1?'':'s'}`);
+        } else {
+          cellEl.classList.remove('owned','crit');
+          cellEl.style.removeProperty('--owner-color');
+          cellEl.setAttribute('aria-label', `row ${r+1} column ${c+1}, empty`);
+        }
+      }
+    }
+    updateChipStats();
+  }
+
+  function updateChipStats(){
+    const counts = players.map(()=>0);
+    for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+      const cd = board[r][c];
+      if(cd.owner !== null) counts[cd.owner] += cd.count;
+    }
+    players.forEach((p,i)=>{
+      const el = document.getElementById('chip-stat-'+i);
+      if(el) el.textContent = counts[i];
+    });
+
+    const total = counts.reduce((a,b)=>a+b, 0);
+    const maxCount = Math.max(...counts);
+
+    // territory bar
+    const bar = document.getElementById('territory-bar');
+    if(bar){
+      bar.innerHTML = '';
+      if(total === 0){
+        const seg = document.createElement('div');
+        seg.className = 'territory-seg';
+        seg.style.width = '100%';
+        seg.style.background = 'var(--cell)';
+        bar.appendChild(seg);
+      } else {
+        players.forEach((p,i)=>{
+          if(counts[i] <= 0) return;
+          const seg = document.createElement('div');
+          seg.className = 'territory-seg';
+          seg.style.width = (counts[i]/total*100) + '%';
+          seg.style.background = `var(${COLORS[i]})`;
+          bar.appendChild(seg);
+        });
+      }
+    }
+
+    // leading chip(s)
+    players.forEach((p,i)=>{
+      const chip = document.getElementById('chip-'+i);
+      if(!chip) return;
+      chip.style.color = `var(${COLORS[i]})`;
+      const isLeading = p.alive && maxCount > 0 && counts[i] === maxCount;
+      chip.classList.toggle('leading', isLeading);
+      let crownEl = chip.querySelector('.crown');
+      if(isLeading){
+        if(!crownEl){
+          crownEl = document.createElement('span');
+          crownEl.className = 'crown';
+          crownEl.textContent = '👑';
+          chip.querySelector('.name').after(crownEl);
+        }
+      } else if(crownEl){
+        crownEl.remove();
+      }
+    });
+  }
+
+  function isMyTurn(){
+    return netMode === 'local' ? true : current === mySlot;
+  }
+
+  // Tracks whose turn was last announced so the chime only fires on an actual change,
+  // not on every one of the several updateBottom() calls a single chain reaction
+  // triggers, and not on the very first render of a fresh or newly-joined game.
+  let lastAnnouncedTurn = null;
+
+  function updateBottom(){
+    if(lastAnnouncedTurn !== null && lastAnnouncedTurn !== current) Sound.turnChange();
+    lastAnnouncedTurn = current;
+
+    const online = netMode !== 'local';
+    document.getElementById('turn-info').textContent = 'TURN ' + players[current].name.toUpperCase();
+    document.getElementById('move-info').textContent = 'MOVE ' + moveNum;
+
+    let hint;
+    if(online && !isMyTurn()){
+      hint = 'WAITING FOR ' + players[current].name.toUpperCase();
+    } else if(players[current].moved){
+      hint = 'TAP YOUR OWN CIRCLES';
+    } else {
+      hint = 'TAP AN EMPTY TILE TO START';
+    }
+    document.getElementById('hint-info').textContent = hint;
+
+    const exitBtn = document.getElementById('restart-btn');
+    if(exitBtn) exitBtn.textContent = online ? 'Leave room' : 'New game';
+
+    const badge = document.getElementById('net-badge');
+    if(badge){
+      badge.classList.toggle('active', online);
+      if(online){
+        const me = players[mySlot];
+        badge.innerHTML = `<span class="you-dot" style="background:var(${COLORS[mySlot]})"></span>
+                           you are ${escapeHtml(me ? me.name : 'player '+(mySlot+1))} · room ${escapeHtml(roomCode)}`;
+      }
+    }
+
+    const boardEl = document.getElementById('board');
+    if(boardEl) boardEl.classList.toggle('locked', online && !isMyTurn());
+
+    [...document.querySelectorAll('.chip')].forEach((chip,i)=>{
+      chip.classList.toggle('active', i===current);
+    });
+  }
+
+  function isLegalMove(playerIdx, r, c){
+    if(!board || !board[r] || !board[r][c]) return false;
+    const cell = board[r][c];
+    const player = players[playerIdx];
+    if(!player || !player.alive) return false;
+    if(cell.owner !== null && cell.owner !== playerIdx) return false;
+    if(cell.owner === null && player.moved) return false;
+    return true;
+  }
+
+  function deny(cellEl){
+    Sound.denied();
+    if(!cellEl) return;
+    cellEl.classList.add('denied');
+    setTimeout(()=>cellEl.classList.remove('denied'), 300);
+  }
+
+  function applyMove(playerIdx, r, c){
+    if(busy) return false;
+    if(playerIdx !== current) return false;
+    if(!isLegalMove(playerIdx, r, c)) return false;
+
+    const cell = board[r][c];
+    cell.owner = playerIdx;
+    cell.count += 1;
+    players[playerIdx].moved = true;
+    moveNum++;
+    busy = true;
+    paintBoard();
+    updateBottom();
+    broadcastState();
+
+    // The board is unusable while busy is true, so releasing it cannot depend on the
+    // happy path. Anything thrown inside the chain resolution used to leave the flag
+    // stuck on and the game permanently frozen with no way back except a reload.
+    resolveExplosions(playerIdx)
+      .catch(err=>{ console.error('[bongsho] chain resolution failed', err); })
+      .finally(()=>{
+        try{
+          flushPendingLeaves();
+          afterMoveChecks();
+        }catch(err){
+          console.error('[bongsho] post move checks failed', err);
+        }
+        busy = false;
+        broadcastState();
+      });
+    return true;
+  }
+
+  const ARROW_DIRS = {
+    ArrowUp:[-1,0], ArrowDown:[1,0], ArrowLeft:[0,-1], ArrowRight:[0,1],
+    Up:[-1,0], Down:[1,0], Left:[0,-1], Right:[0,1]
+  };
+
+  function onCellKey(e){
+    const el = e.currentTarget;
+    if(e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar'){
+      e.preventDefault();
+      onCellClick(e);
+      return;
+    }
+    const dir = ARROW_DIRS[e.key];
+    if(!dir) return;
+    e.preventDefault();
+    const nr = parseInt(el.dataset.r) + dir[0];
+    const nc = parseInt(el.dataset.c) + dir[1];
+    if(nr < 0 || nr >= rows || nc < 0 || nc >= cols) return;
+    const boardEl = document.getElementById('board');
+    const target = boardEl && boardEl.children[nr*cols + nc];
+    if(target) target.focus();
+  }
+
+  function onCellClick(e){
+    const el = e.currentTarget;
+    const r = parseInt(el.dataset.r);
+    const c = parseInt(el.dataset.c);
+    // Audio can only start from inside a real user gesture, and a tap on the board
+    // is the most reliable one we get, so use it to wake the audio context up.
+    Sound.unlock();
+    // A tap during a chain reaction used to do nothing at all, with no indication
+    // that it had been ignored. Shake the tile so the input is visibly refused.
+    if(busy){ deny(el); return; }
+
+    if(netMode !== 'local' && !isMyTurn()){ deny(el); return; }
+    if(!isLegalMove(netMode === 'local' ? current : mySlot, r, c)){ deny(el); return; }
+
+    if(netMode === 'client'){
+      if(!hostConn || !hostConn.open){ deny(el); return; }
+      hostConn.send({type:'move', r, c});
+      // The host is the one who actually places the orb, but a tap should feel
+      // instant, so play locally now rather than waiting on the round trip.
+      Sound.tap();
+      busy = true;
+      clearTimeout(pendingMoveTimer);
+      pendingMoveTimer = setTimeout(()=>{ busy = false; }, 4000);
+      return;
+    }
+
+    if(applyMove(current, r, c)) Sound.tap();
+    else deny(el);
+  }
+
+  let pendingMoveTimer = null;
+
+  function sleep(ms){ return new Promise(res=>setTimeout(res,ms)); }
+
+  function getOverflowing(){
+    const list = [];
+    for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+      if(board[r][c].count >= 4) list.push({r,c});
+    }
+    return list;
+  }
+
+  const SPREAD_DIRS = [[-1,0],[1,0],[0,-1],[0,1]];
+
+  function spawnTravelers(r, c, playerIdx, boardEl){
+    const boardRect = boardEl.getBoundingClientRect();
+    const srcEl = boardEl.children[r*cols+c];
+    const srcRect = srcEl.getBoundingClientRect();
+    const srcX = srcRect.left - boardRect.left + srcRect.width/2;
+    const srcY = srcRect.top - boardRect.top + srcRect.height/2;
+    const size = Math.max(8, srcRect.width * 0.24);
+    const color = `var(${COLORS[playerIdx]})`;
+
+    SPREAD_DIRS.forEach(([dr,dc])=>{
+      const nr = r+dr, nc = c+dc;
+      if(nr<0 || nr>=rows || nc<0 || nc>=cols) return;
+      const tgtEl = boardEl.children[nr*cols+nc];
+      const tgtRect = tgtEl.getBoundingClientRect();
+      const tgtX = tgtRect.left - boardRect.left + tgtRect.width/2;
+      const tgtY = tgtRect.top - boardRect.top + tgtRect.height/2;
+
+      const trav = document.createElement('div');
+      trav.className = 'traveler';
+      trav.style.width = size+'px';
+      trav.style.height = size+'px';
+      trav.style.background = color;
+      trav.style.color = color;
+      trav.style.left = srcX+'px';
+      trav.style.top = srcY+'px';
+      boardEl.appendChild(trav);
+
+      requestAnimationFrame(()=>{
+        requestAnimationFrame(()=>{
+          trav.style.left = tgtX+'px';
+          trav.style.top = tgtY+'px';
+          trav.style.transform = 'translate(-50%,-50%) scale(1.25)';
+        });
+      });
+      setTimeout(()=>trav.remove(), 320);
+    });
+  }
+
+  // ---- shared explosion visuals, used by the host directly and replayed by clients ----
+  function fxExplode(cells, playerIdx){
+    const boardEl = document.getElementById('board');
+    if(!boardEl) return;
+    Sound.explode();
+    cells.forEach(({r,c})=>{
+      const cellEl = boardEl.children[r*cols+c];
+      if(!cellEl) return;
+      cellEl.classList.add('pulse','flash');
+      const ring = document.createElement('div');
+      ring.className = 'ring';
+      cellEl.appendChild(ring);
+      spawnTravelers(r, c, playerIdx, boardEl);
+    });
+  }
+
+  function fxClear(cells){
+    const boardEl = document.getElementById('board');
+    if(!boardEl) return;
+    cells.forEach(({r,c})=>{
+      const cellEl = boardEl.children[r*cols+c];
+      if(cellEl) cellEl.classList.remove('pulse','flash');
+    });
+  }
+
+  function fxLand(cells){
+    const boardEl = document.getElementById('board');
+    if(!boardEl) return;
+    cells.forEach(({r,c})=>{
+      SPREAD_DIRS.forEach(([dr,dc])=>{
+        const nr = r+dr, nc = c+dc;
+        if(nr<0 || nr>=rows || nc<0 || nc>=cols) return;
+        const nbEl = boardEl.children[nr*cols+nc];
+        if(!nbEl) return;
+        nbEl.classList.add('land');
+        setTimeout(()=>nbEl.classList.remove('land'), 280);
+      });
+    });
+  }
+
+  function broadcastFx(cells, playerIdx){
+    if(netMode !== 'host') return;
+    broadcastToAll({ type:'fx', cells: cells.map(({r,c})=>[r,c]), player: playerIdx });
+  }
+
+  // Returns the index of the only player with tiles on the board, or -1 if more than
+  // one player is still represented. Used both to end a chain early and to settle the
+  // game, so the two never disagree about who owns what.
+  function soleOwner(){
+    let found = -1;
+    for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+      const cell = board[r][c];
+      if(cell.owner === null || cell.count <= 0) continue;
+      if(found === -1) found = cell.owner;
+      else if(found !== cell.owner) return -1;
+    }
+    return found;
+  }
+
+  const MAX_WAVES = 300;
+
+  async function resolveExplosions(playerIdx){
+    let wave = getOverflowing();
+    let guard = 0;
+    while(wave.length > 0 && guard < MAX_WAVES){
+      guard++;
+
+      fxExplode(wave, playerIdx);
+      broadcastFx(wave, playerIdx);
+      await sleep(300);
+      fxClear(wave);
+
+      wave.forEach(({r,c})=>{
+        const cell = board[r][c];
+        cell.count -= 4;
+        SPREAD_DIRS.forEach(([dr,dc])=>{
+          const nr = r+dr, nc = c+dc;
+          if(nr>=0 && nr<rows && nc>=0 && nc<cols){
+            const nb = board[nr][nc];
+            nb.owner = playerIdx;
+            nb.count += 1;
+          }
+        });
+        if(cell.count <= 0){ cell.count = 0; cell.owner = null; }
+      });
+      paintBoard();
+      fxLand(wave);
+      broadcastState();
+
+      // Once a single player holds every tile the game is already decided, and no
+      // later wave can change that. Without this the cascade kept detonating until
+      // the orbs drained off the edges of the board, which on a large grid meant
+      // many seconds of animation before the win overlay finally appeared.
+      if(soleOwner() !== -1) break;
+
+      await sleep(160);
+      wave = getOverflowing();
+    }
+  }
+
+  function afterMoveChecks(){
+    // has every currently-alive player moved at least once?
+    if(!roundsCompleted){
+      roundsCompleted = players.every(p => p.moved);
+    }
+
+    if(roundsCompleted){
+      // update alive status
+      const totals = players.map(()=>0);
+      for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+        const cd = board[r][c];
+        if(cd.owner !== null) totals[cd.owner] += cd.count;
+      }
+      players.forEach((p,i)=>{
+        if(p.moved && totals[i] === 0) p.alive = false;
+      });
+      renderChipAliveStates();
+    }
+
+    // A player is still in contention if they can act, meaning they hold a tile or they
+    // have not opened yet and there is somewhere left to open. The old check only ran
+    // once every player had taken a turn, so a board that filled up before a late
+    // player ever opened was never evaluated at all and the game simply never ended.
+    // Reading contention off the board covers that as well as ordinary elimination.
+    const contenders = players.filter((p,i)=> p.alive && hasLegalMove(i));
+    if(contenders.length === 1){
+      declareWinner(players.indexOf(contenders[0]));
+      return;
+    }
+    if(contenders.length === 0){
+      const winner = soleOwner();
+      if(winner !== -1){ declareWinner(winner); return; }
+    }
+
+    advanceTurn();
+  }
+
+  // A player can act if they hold a tile, or if they have not opened yet and there is
+  // still somewhere to open. Without this check the turn could land on somebody with
+  // no legal move at all, which left the game sitting there waiting for an input that
+  // could never come.
+  function hasLegalMove(playerIdx){
+    const p = players[playerIdx];
+    if(!p || !p.alive) return false;
+    for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+      const cell = board[r][c];
+      if(cell.owner === playerIdx && cell.count > 0) return true;
+      if(cell.owner === null && !p.moved) return true;
+    }
+    return false;
+  }
+
+  function renderChipAliveStates(){
+    players.forEach((p,i)=>{
+      const chip = document.getElementById('chip-'+i);
+      if(chip) chip.classList.toggle('eliminated', !p.alive);
+    });
+  }
+
+  function advanceTurn(){
+    let next = current;
+    for(let i=0;i<players.length;i++){
+      next = (next+1) % players.length;
+      if(players[next].alive && hasLegalMove(next)){
+        current = next;
+        updateBottom();
+        return;
+      }
+    }
+    // Nobody else can act. Either the current player carries on, or the board has
+    // already settled the game and we say so rather than stalling.
+    if(players[current] && players[current].alive && hasLegalMove(current)){
+      updateBottom();
+      return;
+    }
+    const winner = soleOwner();
+    if(winner !== -1) declareWinner(winner);
+    else updateBottom();
+  }
+
+  function declareWinner(idx){
+    if(netMode === 'host') broadcastToAll({type:'winner', idx});
+    Sound.win();
+    const overlay = document.getElementById('win-overlay');
+    document.getElementById('win-dot').style.background = `var(${COLORS[idx]})`;
+    document.getElementById('win-dot').style.color = `var(${COLORS[idx]})`;
+    document.getElementById('win-title').textContent = players[idx].name + ' wins!';
+    overlay.classList.add('active');
+  }
+
+})();
+</script>
+</body>
+</html>
